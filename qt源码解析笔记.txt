@@ -1,0 +1,131 @@
+
+一：qt事件循环
+	1、从QApplication类的exec()开始，在main函数中：
+
+		QApplication a(argc, argv);
+		...
+		...
+		return a.exec();
+		
+	2、调用了QGuiApplication::exec();
+		int QApplication::exec()
+		{
+			return QGuiApplication::exec();
+		}
+	3、	调用了 QCoreApplication::exec();
+		int QGuiApplication::exec()
+		{
+		#ifndef QT_NO_ACCESSIBILITY
+			QAccessible::setRootObject(qApp);//将应用程序设备根对象
+		#endif
+			return QCoreApplication::exec();
+		}
+		
+			3.1 、aApp是一个宏定义 是一个指向应用程序的指针,（左边是右边的父级QObject QCoreApplication QGuiApplication QApplication）
+			#define qApp (static_cast<QGuiApplication *>(QCoreApplication::instance()))
+
+	3、
+		int QCoreApplication::exec()
+		{
+			if (!QCoreApplicationPrivate::checkInstance("exec"))//简单的对应用程序的一个判断（不是很明白）
+				return -1;
+
+			/*
+				self->d_func()->threadData 解释说明：
+				self：指向应用程序本身，在QCoreApplication 类中申明为:
+					private:static QCoreApplication *self;
+				与	qApp 是同一个指针
+				d_func()；是在一个宏定义中申明的函数，可以返回一个指向私有类的指针，类中申明为：QScopedPointer<QObjectData> d_ptr;
+					#define Q_DECLARE_PRIVATE(Class) \
+					inline Class##Private* d_func() \
+					{ Q_CAST_IGNORE_ALIGN(return reinterpret_cast<Class##Private *>(qGetPtrHelper(d_ptr));) } \
+					inline const Class##Private* d_func() const \
+					{ Q_CAST_IGNORE_ALIGN(return reinterpret_cast<const Class##Private *>(qGetPtrHelper(d_ptr));) } \
+					friend class Class##Private;
+					
+					template <typename T> inline T *qGetPtrHelper(T *ptr) { return ptr; }
+					template <typename Ptr> inline auto qGetPtrHelper(const Ptr &ptr) -> decltype(ptr.operator->()) { return ptr.operator->(); }
+			*/
+
+			QThreadData *threadData = self->d_func()->threadData;
+			
+			
+			if (threadData != QThreadData::current()) {
+				qWarning("%s::exec: Must be called from the main thread", self->metaObject()->className());
+				return -1;
+			}
+			
+			if (!threadData->eventLoops.isEmpty()) {
+				qWarning("QCoreApplication::exec: The event loop is already running");
+				return -1;
+			}
+
+			threadData->quitNow = false;
+			QEventLoop eventLoop;
+			self->d_func()->in_exec = true;
+			self->d_func()->aboutToQuitEmitted = false;
+			int returnCode = eventLoop.exec();
+			threadData->quitNow = false;
+
+			if (self)
+				self->d_func()->execCleanup();
+
+			return returnCode;
+		}
+		
+		
+		QThreadData *QThreadData::current(bool createIfNecessary)
+		{
+			qt_create_tls();	//创建一个仅供当前线程使用的线程局部静态变量
+			QThreadData *threadData = reinterpret_cast<QThreadData *>(TlsGetValue(qt_current_thread_data_tls_index));
+			if (!threadData && createIfNecessary) {
+				threadData = new QThreadData;
+				// This needs to be called prior to new AdoptedThread() to
+				// avoid recursion.
+				TlsSetValue(qt_current_thread_data_tls_index, threadData);
+				QT_TRY {
+					threadData->thread = new QAdoptedThread(threadData);
+				} QT_CATCH(...) {
+					TlsSetValue(qt_current_thread_data_tls_index, 0);
+					threadData->deref();
+					threadData = 0;
+					QT_RETHROW;
+				}
+				threadData->deref();
+				threadData->isAdopted = true;
+				threadData->threadId.store(reinterpret_cast<Qt::HANDLE>(quintptr(GetCurrentThreadId())));
+
+		#ifndef Q_OS_WINRT
+				if (!QCoreApplicationPrivate::theMainThread) {
+					QCoreApplicationPrivate::theMainThread = threadData->thread.load();
+				} else {
+		#else
+				// for winrt the main thread is set explicitly in QCoreApplication's constructor as the
+				// native main thread (Xaml thread) is not Qt's main thread.
+				{
+		#endif
+					HANDLE realHandle = INVALID_HANDLE_VALUE;
+					DuplicateHandle(GetCurrentProcess(),
+							GetCurrentThread(),
+							GetCurrentProcess(),
+							&realHandle,
+							0,
+							FALSE,
+							DUPLICATE_SAME_ACCESS);
+					qt_watch_adopted_thread(realHandle, threadData->thread);
+				}
+			}
+			return threadData;
+		}
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
