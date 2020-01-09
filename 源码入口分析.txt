@@ -1,0 +1,34 @@
+	
+main函数进入：
+
+			
+	QApplication a(argc, argv);
+			
+	qapplication.cpp-->在QApplication 的构造函数中调用以下函数：
+						Q_D(QApplication);//申明d指针
+						d->init();
+						
+						相当于申明了一个指向QApplication私有类的指针，QApplicationPrivate,同时调用该类的初始化
+						void QApplicationPrivate::init()
+						{
+							QGuiApplicationPrivate::init();//跳转1
+
+							initResources();
+
+							qt_is_gui_used = (application_type != QApplicationPrivate::Tty);
+							process_cmdline();
+
+							// Must be called before initialize()
+							qt_init(this, application_type);
+							initialize();
+							eventDispatcher->startingUp();
+
+						#ifndef QT_NO_ACCESSIBILITY
+							// factory for accessible interfaces for widgets shipped with Qt
+							QAccessible::installFactory(&qAccessibleFactory);
+						#endif
+
+						}
+						
+							
+	

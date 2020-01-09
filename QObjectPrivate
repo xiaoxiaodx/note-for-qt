@@ -1,0 +1,138 @@
+class Q_CORE_EXPORT QObjectPrivate : public QObjectData
+{
+    Q_DECLARE_PUBLIC(QObject)
+
+public:
+    struct ExtraData
+    {
+        ExtraData() {}
+    #ifndef QT_NO_USERDATA
+        QVector<QObjectUserData *> userData;
+    #endif
+        QList<QByteArray> propertyNames;
+        QVector<QVariant> propertyValues;
+        QVector<int> runningTimers;
+        QList<QPointer<QObject> > eventFilters;
+        QString objectName;
+    };
+
+    typedef void (*StaticMetaCallFunction)(QObject *, QMetaObject::Call, int, void **);
+    struct Connection
+    {
+        QObject *sender;
+        QObject *receiver;
+        union {
+            StaticMetaCallFunction callFunction;
+            QtPrivate::QSlotObjectBase *slotObj;
+        };
+        // The next pointer for the singly-linked ConnectionList
+        Connection *nextConnectionList;
+        //senders linked list
+        Connection *next;
+        Connection **prev;
+        QAtomicPointer<const int> argumentTypes;
+        QAtomicInt ref_;
+        ushort method_offset;
+        ushort method_relative;
+        uint signal_index : 27; // In signal range (see QObjectPrivate::signalIndex())
+        ushort connectionType : 3; // 0 == auto, 1 == direct, 2 == queued, 4 == blocking
+        ushort isSlotObject : 1;
+        ushort ownArgumentTypes : 1;
+        Connection() : nextConnectionList(nullptr), ref_(2), ownArgumentTypes(true) {
+            //ref_ is 2 for the use in the internal lists, and for the use in QMetaObject::Connection
+        }
+        ~Connection();
+        int method() const { Q_ASSERT(!isSlotObject); return method_offset + method_relative; }
+        void ref() { ref_.ref(); }
+        void deref() {
+            if (!ref_.deref()) {
+                Q_ASSERT(!receiver);
+                delete this;
+            }
+        }
+    };
+    // ConnectionList is a singly-linked list
+    struct ConnectionList {
+        ConnectionList() : first(nullptr), last(nullptr) {}
+        Connection *first;
+        Connection *last;
+    };
+
+    struct Sender
+    {
+        QObject *sender;
+        int signal;
+        int ref;
+    };
+
+
+    QObjectPrivate(int version = QObjectPrivateVersion);
+    virtual ~QObjectPrivate();
+    void deleteChildren();
+
+    void setParent_helper(QObject *);
+    void moveToThread_helper();
+    void setThreadData_helper(QThreadData *currentData, QThreadData *targetData);
+    void _q_reregisterTimers(void *pointer);
+
+    bool isSender(const QObject *receiver, const char *signal) const;
+    QObjectList receiverList(const char *signal) const;
+    QObjectList senderList() const;
+
+    void addConnection(int signal, Connection *c);
+    void cleanConnectionLists();
+
+    static inline Sender *setCurrentSender(QObject *receiver,
+                                    Sender *sender);
+    static inline void resetCurrentSender(QObject *receiver,
+                                   Sender *currentSender,
+                                   Sender *previousSender);
+
+    static QObjectPrivate *get(QObject *o) {
+        return o->d_func();
+    }
+    static const QObjectPrivate *get(const QObject *o) { return o->d_func(); }
+
+    int signalIndex(const char *signalName, const QMetaObject **meta = nullptr) const;
+    inline bool isSignalConnected(uint signalIdx, bool checkDeclarative = true) const;
+    inline bool isDeclarativeSignalConnected(uint signalIdx) const;
+
+    // To allow abitrary objects to call connectNotify()/disconnectNotify() without making
+    // the API public in QObject. This is used by QQmlNotifierEndpoint.
+    inline void connectNotify(const QMetaMethod &signal);
+    inline void disconnectNotify(const QMetaMethod &signal);
+
+    template <typename Func1, typename Func2>
+    static inline QMetaObject::Connection connect(const typename QtPrivate::FunctionPointer<Func1>::Object *sender, Func1 signal,
+                                                  const typename QtPrivate::FunctionPointer<Func2>::Object *receiverPrivate, Func2 slot,
+                                                  Qt::ConnectionType type = Qt::AutoConnection);
+
+    template <typename Func1, typename Func2>
+    static inline bool disconnect(const typename QtPrivate::FunctionPointer<Func1>::Object *sender, Func1 signal,
+                                  const typename QtPrivate::FunctionPointer<Func2>::Object *receiverPrivate, Func2 slot);
+
+    static QMetaObject::Connection connectImpl(const QObject *sender, int signal_index,
+                                               const QObject *receiver, void **slot,
+                                               QtPrivate::QSlotObjectBase *slotObj, Qt::ConnectionType type,
+                                               const int *types, const QMetaObject *senderMetaObject);
+    static QMetaObject::Connection connect(const QObject *sender, int signal_index, QtPrivate::QSlotObjectBase *slotObj, Qt::ConnectionType type);
+    static bool disconnect(const QObject *sender, int signal_index, void **slot);
+public:
+    ExtraData *extraData;    // extra data set by the user
+    QThreadData *threadData; // id of the thread that owns the object
+
+    QObjectConnectionListVector *connectionLists;
+
+    Connection *senders;     // linked list of connections connected to this object
+    Sender *currentSender;   // object currently activating the object
+    mutable quint32 connectedSignals[2];
+
+    union {
+        QObject *currentChildBeingDeleted; // should only be used when QObjectData::isDeletingChildren is set
+        QAbstractDeclarativeData *declarativeData; //extra data used by the declarative module
+    };
+
+    // these objects are all used to indicate that a QObject was deleted
+    // plus QPointer, which keeps a separate list
+    QAtomicPointer<QtSharedPointer::ExternalRefCountData> sharedRefcount;
+}

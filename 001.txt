@@ -1,0 +1,154 @@
+							void QGuiApplicationPrivate::init()
+							{
+								Q_TRACE(QGuiApplicationPrivate_init_entry);
+
+								QCoreApplicationPrivate::init();//002.txt
+
+								QCoreApplicationPrivate::is_app_running = false; // Starting up.
+
+								bool loadTestability = false;
+								QList<QByteArray> pluginList;
+								// Get command line params
+							#ifndef QT_NO_SESSIONMANAGER
+								QString session_id;
+								QString session_key;
+							# if defined(Q_OS_WIN)
+								wchar_t guidstr[40];
+								GUID guid;
+								CoCreateGuid(&guid);
+								StringFromGUID2(guid, guidstr, 40);
+								session_id = QString::fromWCharArray(guidstr);
+								CoCreateGuid(&guid);
+								StringFromGUID2(guid, guidstr, 40);
+								session_key = QString::fromWCharArray(guidstr);
+							# endif
+							#endif
+								QString s;
+								int j = argc ? 1 : 0;
+								for (int i=1; i<argc; i++) {
+									if (!argv[i])
+										continue;
+									if (*argv[i] != '-') {
+										argv[j++] = argv[i];
+										continue;
+									}
+									const char *arg = argv[i];
+									if (arg[1] == '-') // startsWith("--")
+										++arg;
+									if (strcmp(arg, "-plugin") == 0) {
+										if (++i < argc)
+											pluginList << argv[i];
+									} else if (strcmp(arg, "-reverse") == 0) {
+										force_reverse = true;
+			
+							#ifndef QT_NO_SESSIONMANAGER
+									} else if (strcmp(arg, "-session") == 0 && i < argc - 1) {
+										++i;
+										if (argv[i] && *argv[i]) {
+											session_id = QString::fromLatin1(argv[i]);
+											int p = session_id.indexOf(QLatin1Char('_'));
+											if (p >= 0) {
+												session_key = session_id.mid(p +1);
+												session_id = session_id.left(p);
+											}
+											is_session_restored = true;
+										}
+							#endif
+									} else if (strcmp(arg, "-testability") == 0) {
+										loadTestability = true;
+									} else if (strncmp(arg, "-style=", 7) == 0) {
+										s = QString::fromLocal8Bit(arg + 7);
+									} else if (strcmp(arg, "-style") == 0 && i < argc - 1) {
+										s = QString::fromLocal8Bit(argv[++i]);
+									} else {
+										argv[j++] = argv[i];
+									}
+
+									if (!s.isEmpty())
+										styleOverride = s;
+								}
+
+								if (j < argc) {
+									argv[j] = 0;
+									argc = j;
+								}
+
+								// Load environment exported generic plugins
+								QByteArray envPlugins = qgetenv("QT_QPA_GENERIC_PLUGINS");
+								if (!envPlugins.isEmpty())
+									pluginList += envPlugins.split(',');
+
+								if (platform_integration == 0)
+									createPlatformIntegration();
+
+								initPalette();
+								QFont::initialize();
+
+								mouse_double_click_distance = platformTheme()->themeHint(QPlatformTheme::MouseDoubleClickDistance).toInt();
+
+							#ifndef QT_NO_CURSOR
+								QCursorData::initialize();
+							#endif
+
+								// trigger registering of QVariant's GUI types
+								qRegisterGuiVariant();
+
+							#if QT_CONFIG(animation)
+								// trigger registering of animation interpolators
+								qRegisterGuiGetInterpolator();
+							#endif
+
+								// set a global share context when enabled unless there is already one
+							#ifndef QT_NO_OPENGL
+								if (qApp->testAttribute(Qt::AA_ShareOpenGLContexts) && !qt_gl_global_share_context()) {
+									QOpenGLContext *ctx = new QOpenGLContext;
+									ctx->setFormat(QSurfaceFormat::defaultFormat());
+									ctx->create();
+									qt_gl_set_global_share_context(ctx);
+									ownGlobalShareContext = true;
+								}
+							#endif
+
+								QWindowSystemInterfacePrivate::eventTime.start();
+
+								is_app_running = true;
+								init_plugins(pluginList);
+								QWindowSystemInterface::flushWindowSystemEvents();
+
+								Q_Q(QGuiApplication);
+							#ifndef QT_NO_SESSIONMANAGER
+								// connect to the session manager
+								session_manager = new QSessionManager(q, session_id, session_key);
+							#endif
+
+							#if QT_CONFIG(library)
+								if (qEnvironmentVariableIntValue("QT_LOAD_TESTABILITY") > 0)
+									loadTestability = true;
+
+								if (loadTestability) {
+									QLibrary testLib(QStringLiteral("qttestability"));
+									if (Q_UNLIKELY(!testLib.load())) {
+										qCritical() << "Library qttestability load failed:" << testLib.errorString();
+									} else {
+										typedef void (*TasInitialize)(void);
+										TasInitialize initFunction = (TasInitialize)testLib.resolve("qt_testability_init");
+										if (Q_UNLIKELY(!initFunction)) {
+											qCritical("Library qttestability resolve failed!");
+										} else {
+											initFunction();
+										}
+									}
+								}
+							#else
+								Q_UNUSED(loadTestability);
+							#endif // QT_CONFIG(library)
+
+								if (layout_direction == Qt::LayoutDirectionAuto || force_reverse)
+									QGuiApplication::setLayoutDirection(qt_detectRTLLanguage() ? Qt::RightToLeft : Qt::LeftToRight);
+
+								if (!QGuiApplicationPrivate::displayName)
+									QObject::connect(q, &QGuiApplication::applicationNameChanged,
+													 q, &QGuiApplication::applicationDisplayNameChanged);
+
+								Q_TRACE(QGuiApplicationPrivate_init_exit);
+							}

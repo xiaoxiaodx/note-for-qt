@@ -1,0 +1,87 @@
+void QCoreApplicationPrivate::init()
+{
+    Q_TRACE(QCoreApplicationPrivate_init_entry);
+
+
+    Q_Q(QCoreApplication);
+
+    initLocale();//给qt_locale_initialized 赋值为真
+
+    Q_ASSERT_X(!QCoreApplication::self, "QCoreApplication", "there should be only one application object");
+    
+	QCoreApplication::self = q;//私有类的q指针 与QCoreApplication::self 指向同一块内存
+
+    // Store app name/version (so they're still available after QCoreApplication is destroyed)
+	
+	//coreappdata() 是一个之前定义的 全局静态变量 QCoreApplicationData
+    if (!coreappdata()->applicationNameSet)
+        coreappdata()->application = appName();
+
+    if (!coreappdata()->applicationVersionSet)
+        coreappdata()->applicationVersion = appVersion();
+
+#if QT_CONFIG(library)
+    // Reset the lib paths, so that they will be recomputed, taking the availability of argv[0]
+    // into account. If necessary, recompute right away and replay the manual changes on top of the
+    // new lib paths.
+    QStringList *appPaths = coreappdata()->app_libpaths.take();
+    QStringList *manualPaths = coreappdata()->manual_libpaths.take();
+    if (appPaths) {//空的工程 该值为false
+        if (manualPaths) {
+            // Replay the delta. As paths can only be prepended to the front or removed from
+            // anywhere in the list, we can just linearly scan the lists and find the items that
+            // have been removed. Once the original list is exhausted we know all the remaining
+            // items have been added.
+            QStringList newPaths(q->libraryPaths());
+            for (int i = manualPaths->length(), j = appPaths->length(); i > 0 || j > 0; qt_noop()) {
+                if (--j < 0) {
+                    newPaths.prepend((*manualPaths)[--i]);
+                } else if (--i < 0) {
+                    newPaths.removeAll((*appPaths)[j]);
+                } else if ((*manualPaths)[i] != (*appPaths)[j]) {
+                    newPaths.removeAll((*appPaths)[j]);
+                    ++i; // try again with next item.
+                }
+            }
+            delete manualPaths;
+            coreappdata()->manual_libpaths.reset(new QStringList(newPaths));
+        }
+        delete appPaths;
+    }
+#endif
+
+#ifndef QT_NO_QOBJECT
+    // use the event dispatcher created by the app programmer (if any)
+    Q_ASSERT(!eventDispatcher);
+    eventDispatcher = threadData->eventDispatcher.load();
+
+    // otherwise we create one
+    if (!eventDispatcher)
+        createEventDispatcher();
+    Q_ASSERT(eventDispatcher);
+
+    if (!eventDispatcher->parent()) {
+        eventDispatcher->moveToThread(threadData->thread);
+        eventDispatcher->setParent(q);
+    }
+
+    threadData->eventDispatcher = eventDispatcher;
+    eventDispatcherReady();
+#endif
+
+
+    processCommandLineArguments();
+
+    qt_call_pre_routines();
+    qt_startup_hook();
+#ifndef QT_BOOTSTRAPPED
+    if (Q_UNLIKELY(qtHookData[QHooks::Startup]))
+        reinterpret_cast<QHooks::StartupCallback>(qtHookData[QHooks::Startup])();
+#endif
+
+#ifndef QT_NO_QOBJECT
+    is_app_running = true; // No longer starting up.
+#endif
+
+    Q_TRACE(QCoreApplicationPrivate_init_exit);
+}
